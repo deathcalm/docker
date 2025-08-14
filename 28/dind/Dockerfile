@@ -4,55 +4,61 @@
 # PLEASE DO NOT EDIT IT DIRECTLY.
 #
 
-FROM docker:28-cli
+FROM ghcr.io/deathcalm/docker:28-cli-debian-bookworm-slim
 
 # https://github.com/moby/moby/blob/0eecd59153c03ced5f5ddd79cc98f29e4d86daec/project/PACKAGERS.md#runtime-dependencies
 # https://github.com/docker/docker-ce-packaging/blob/963aa02666035d4e268f33c63d7868d6cdd1d34c/deb/common/control#L28-L41
 RUN set -eux; \
-	apk add --no-cache \
+	apt-get update; \
+	DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
 		btrfs-progs \
 		e2fsprogs \
-		e2fsprogs-extra \
 		git \
-		ip6tables \
 		iptables \
 		openssl \
 		pigz \
-		shadow-uidmap \
+		uidmap \
 		xfsprogs \
-		xz \
-		zfs \
-	;
+		xz-utils \
+		iproute2 \
+		kmod \
+		wget \
+		ca-certificates; \
+	rm -rf /var/lib/apt/lists/*
 
 # dind might be used on systems where the nf_tables kernel module isn't available. In that case,
 # we need to switch over to xtables-legacy. See https://github.com/docker-library/docker/issues/463
 RUN set -eux; \
-	apk add --no-cache iptables-legacy; \
-# set up a symlink farm we can use PATH to switch to legacy with
-	mkdir -p /usr/local/sbin/.iptables-legacy; \
-# https://gitlab.alpinelinux.org/alpine/aports/-/blob/a7e1610a67a46fc52668528efe01cee621c2ba6c/main/iptables/APKBUILD#L77
-	for f in \
-		iptables \
-		iptables-save \
-		iptables-restore \
-		ip6tables \
-		ip6tables-save \
-		ip6tables-restore \
-	; do \
-# "iptables-save" -> "iptables-legacy-save", "ip6tables" -> "ip6tables-legacy", etc.
-# https://pkgs.alpinelinux.org/contents?branch=v3.22&name=iptables-legacy&arch=x86_64
-		b="$(command -v "${f/tables/tables-legacy}")"; \
-		"$b" --version; \
-		ln -svT "$b" "/usr/local/sbin/.iptables-legacy/$f"; \
-	done; \
+# set up a symlink farm we can use PATH to switch to legacy with (Debian)
+    mkdir -p /usr/local/sbin/.iptables-legacy; \
+    for f in \
+        iptables \
+        iptables-save \
+        iptables-restore \
+        ip6tables \
+        ip6tables-save \
+        ip6tables-restore \
+    ; do \
+        case "$f" in \
+            iptables) legacy="iptables-legacy" ;; \
+            iptables-save) legacy="iptables-legacy-save" ;; \
+            iptables-restore) legacy="iptables-legacy-restore" ;; \
+            ip6tables) legacy="ip6tables-legacy" ;; \
+            ip6tables-save) legacy="ip6tables-legacy-save" ;; \
+            ip6tables-restore) legacy="ip6tables-legacy-restore" ;; \
+        esac; \
+        b="$(command -v "$legacy")"; \
+        "$b" --version; \
+        ln -svT "$b" "/usr/local/sbin/.iptables-legacy/$f"; \
+    done; \
 # verify it works (and gets us legacy)
-	export PATH="/usr/local/sbin/.iptables-legacy:$PATH"; \
-	iptables --version | grep legacy
+    export PATH="/usr/local/sbin/.iptables-legacy:$PATH"; \
+    iptables --version | grep legacy
 
 # set up subuid/subgid so that "--userns-remap=default" works out-of-the-box
 RUN set -eux; \
-	addgroup -S dockremap; \
-	adduser -S -G dockremap dockremap; \
+	addgroup --system dockremap; \
+	adduser --system --ingroup dockremap dockremap; \
 	echo 'dockremap:165536:65536' >> /etc/subuid; \
 	echo 'dockremap:165536:65536' >> /etc/subgid
 
